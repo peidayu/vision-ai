@@ -7,66 +7,146 @@ function VisionAi({ env, formData, value, onChange }) {
   const structuredOutput = {{structuredOutput}};
   const triggerButtonConfig = {{triggerButtonConfig}};
   const handleClick = async () => {
-    const imageUrl = getImageUrlOfControl(
-      formData["{{source_image_id}}"].value
-    );
-    setOutPut("");
-    setLoading(true); // 设置为 loading 状态
-    const res = await fetch("{{baseURL}}", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: "Bearer {{apiKey}}",
-      },
-      body: JSON.stringify({
-        model: "{{modelName}}",
-        stream: true,
-        messages: [
-          {{prompt}},
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageUrl,
+    try {
+      const imageUrl = getImageUrlOfControl(
+        formData["{{source_image_id}}"].value
+      );
+      setOutPut("");
+      setLoading(true); // 设置为 loading 状态
+      // JSONL 解析状态
+      let inJsonlBlock = false;
+      let jsonlBuffer = ""; // 仅在 jsonl 代码块内累计
+      let pendingLine = ""; // 处理跨 chunk 的行拼接
+      const res = await fetch("{{baseURL}}", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer {{apiKey}}",
+        },
+        body: JSON.stringify({
+          model: "{{modelName}}",
+          stream: true,
+          messages: [
+            {{prompt}},
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: imageUrl,
+                  },
                 },
-              },
-            ],
-          },
-        ],
-      }),
-    });
-    await OpenAISSEParser.fromResponse(res, (event) => {
-      if (event.type === "message") {
-        const delta = event.data.choices?.[0]?.delta?.content;
-        if (delta) {
-          setOutPut((prev) => {
-            let newOutPut = prev + delta;
-            onChange(newOutPut, "{{result_id}}");
-            return newOutPut;
-          });
+              ],
+            },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        try {
+          const errText = await res.text();
+          let msg = errText;
+          try {
+            const j = JSON.parse(errText);
+            msg = j.error?.message || j.message || errText;
+          } catch (_) {}
+          throw new Error(`请求失败(${res.status}): ${msg}`);
+        } catch (e) {
+          throw new Error(`请求失败(${res.status})`);
         }
-      } else if (event.type === "done") {
-        if(structuredOutput) {
-          setOutPut(text => {
-            try {
-              const parsedJSON =  extractJSON(text);
-              return Object.keys(parsedJSON).map(key => {
-                onChange(parsedJSON[key], key);
-              });
-            } catch (err) {
-            }
-            return text;
-          })
-        }
-        console.log("\n[Stream finished]");
-        setLoading(false); // 请求完成，重置 loading 状态
-      } else if (event.type === "error") {
-        console.error("Error:", event.error);
-        setLoading(false); // 请求出错，重置 loading 状态
       }
-    });
+      let hasErrored = false;
+      await OpenAISSEParser.fromResponse(res, (event) => {
+        if (event.type === "message") {
+          if (hasErrored) return;
+          // 识别服务端以 JSON 形式返回的错误并提前终止
+          try {
+            if (event.data && typeof event.data === "object" && event.data.error) {
+              hasErrored = true;
+              console.error("Error:", event.data.error);
+              setLoading(false);
+              return;
+            }
+            if (typeof event.data === "string" && event.data.trim().startsWith("{\"error\"")) {
+              const ej = JSON.parse(event.data);
+              hasErrored = true;
+              console.error("Error:", ej.error || ej);
+              setLoading(false);
+              return;
+            }
+          } catch (_) {}
+          const delta = event.data.choices?.[0]?.delta?.content;
+          if (delta) {
+            setOutPut((prev) => {
+              let newOutPut = prev + delta;
+              onChange(newOutPut, "{{result_id}}");
+              // 检测与解析 jsonl 代码块
+              // 进入代码块：```jsonl
+              if (!inJsonlBlock) {
+                const startIdx = newOutPut.lastIndexOf("```jsonl");
+                if (startIdx !== -1) {
+                  inJsonlBlock = true;
+                  // 截取从起始标记后的新增增量部分参与解析
+                  const afterStart = newOutPut.slice(startIdx + 7); // 长度不关键，此处只表示进入块后
+                  // 只处理当前 delta 内的新增以减少开销
+                }
+              }
+
+              if (inJsonlBlock) {
+                // 将本次增量加入缓冲
+                jsonlBuffer += delta;
+                // 如果出现结束标记，先截断到结束标记之前
+                const endIdx = jsonlBuffer.indexOf("```");
+                let parseTarget = jsonlBuffer;
+                if (endIdx !== -1) {
+                  parseTarget = jsonlBuffer.slice(0, endIdx);
+                }
+                // 逐行解析（不跨对象换行的前提下）
+                const parts = (pendingLine + parseTarget).split("\n");
+                pendingLine = parts.pop() || ""; // 保留最后一行（可能不完整）
+                for (const lineRaw of parts) {
+                  const line = lineRaw.trim();
+                  if (!line) continue;
+                  try {
+                    const obj = JSON.parse(line);
+                    if (obj && typeof obj === "object" && obj.key != null) {
+                      onChange(obj.value, String(obj.key));
+                    }
+                  } catch (e) {
+                    // 单行解析失败时忽略该行，继续后续行
+                  }
+                }
+                // 如果检测到结束标记，则退出块并清理缓冲，尝试处理最后残留的一行
+                if (endIdx !== -1) {
+                  inJsonlBlock = false;
+                  jsonlBuffer = "";
+                  if (pendingLine.trim()) {
+                    try {
+                      const tailObj = JSON.parse(pendingLine.trim());
+                      if (tailObj && typeof tailObj === "object" && tailObj.key != null) {
+                        onChange(tailObj.value, String(tailObj.key));
+                      }
+                    } catch (e) {}
+                  }
+                  pendingLine = "";
+                }
+              }
+              return newOutPut;
+            });
+          }
+        } else if (event.type === "done") {
+          // 结构化输出在 jsonl 流期间已逐字段更新，这里无需再整块解析
+          console.log("\n[Stream finished]");
+          setLoading(false); // 请求完成，重置 loading 状态
+         } else if (event.type === "error") {
+          console.error("Error:", event.error);
+          setLoading(false); // 请求出错，重置 loading 状态
+        }
+      });
+    } catch (error) {
+      console.error("Error:", error);
+      setLoading(false); // 请求出错，重置 loading 状态
+    }
   };
 
   return (
@@ -227,45 +307,5 @@ export function extractJSON(text) {
       console.warn("JSON 代码块解析失败:", e);
     }
   }
-
-  // 策略 2: 提取 ``` ... ``` 通用代码块（可能是 JSON）
-  const codeBlockMatch = text.match(/```\s*([\s\S]*?)\s*```/);
-  if (codeBlockMatch) {
-    try {
-      return JSON.parse(codeBlockMatch[1].trim());
-    } catch (e) {
-      console.warn("通用代码块解析失败:", e);
-    }
-  }
-
-  // 策略 3: 提取分隔符内容
-  const separatorMatch = text.match(/===START_JSON===([\s\S]*?)===END_JSON===/);
-  if (separatorMatch) {
-    try {
-      return JSON.parse(separatorMatch[1].trim());
-    } catch (e) {
-      console.warn("分隔符内容解析失败:", e);
-    }
-  }
-
-  // 策略 4: 查找第一个 { 到最后一个 } 的内容
-  const firstBrace = text.indexOf("{");
-  const lastBrace = text.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && firstBrace < lastBrace) {
-    try {
-      const jsonStr = text.substring(firstBrace, lastBrace + 1);
-      return JSON.parse(jsonStr);
-    } catch (e) {
-      console.warn("大括号提取解析失败:", e);
-    }
-  }
-
-  // 策略 5: 直接尝试解析整个文本
-  try {
-    return JSON.parse(text.trim());
-  } catch (e) {
-    console.warn("直接解析失败:", e);
-  }
-
   return null;
 }

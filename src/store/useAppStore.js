@@ -149,7 +149,7 @@ const useAppStore = create((set, get) => ({
           ...state.formConfig,
           provider,
           baseURL: providerConfig.baseURL,
-          apiKey: "",
+          apiKey: providerConfig.apiKey,
           modelName: providerConfig.defaultModel,
         },
       });

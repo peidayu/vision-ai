@@ -3,7 +3,7 @@ export const PROVIDER_CONFIGS = {
   test: {
     name: "测试服务",
     baseURL: "https://api-inference.modelscope.cn/v1",
-    apiKey: "ms-1f83ddba-1fd4-48bf-8a35-06be74754366",
+    apiKey: "ms-f70307f5-85bf-4fd1-8b64-9168298e4fd2",
     defaultModel: "Qwen/Qwen3-VL-235B-A22B-Instruct",
   },
   openai: {

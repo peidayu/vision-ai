@@ -238,24 +238,30 @@ export function buildStructuredPrompt(
       exampleJSON[m.controlId] = `识别到的${controlName}`;
     });
 
-  // 组合完整 Prompt
+  // 组合完整 Prompt（要求以 JSONL 流式逐行输出）
+  const jsonlExampleLines = Object.keys(exampleJSON)
+    .map((key) => `{"key":"${key}","value":"${exampleJSON[key]}"}`)
+    .join("\n");
+
   return `${basePrompt}
 
-请按照以下结构返回识别结果：
+请按照以下结构返回识别结果（流式逐字段返回）：
 
 字段说明：
 ${fieldDescriptions}
 
-返回格式（请在 JSON 代码块中返回）：
-\`\`\`json
-${JSON.stringify(exampleJSON, null, 2)}
+返回格式（请在 jsonl 代码块中返回，按行输出）：
+\`\`\`jsonl
+${jsonlExampleLines}
 \`\`\`
 
-注意事项：
-1. 必须使用 \`\`\`json 代码块包裹 JSON 数据
-2. 如果某个字段无法识别，请填写 "未识别"
-3. 确保 JSON 格式正确，可以被解析
-4. JSON 的键名必须严格使用上述字段 ID`;
+严格要求：
+1. 必须使用 \`\`\`jsonl 代码块包裹内容
+2. 代码块内每一行都是一个完整 JSON 对象，形如 {"key":"字段ID","value":"字段值"}
+3. 每一行对象仅包含 key 与 value 两个属性
+4. 每一行结尾使用单个换行分隔；对象内部务必不要换行
+5. 仅输出已识别到的字段；无法识别的字段不要输出
+6. 字段ID必须严格使用以上列出的 controlId`;
 }
 
 /**
