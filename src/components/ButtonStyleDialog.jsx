@@ -1,28 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { X } from "lucide-react";
+import * as LucideIconComp from "lucide-react";
 import TriggerButton from "./TriggerButton";
 
-// 常用的 Lucide 图标列表
-const ICON_OPTIONS = [
-  { value: "", label: "无图标" },
-  { value: "ArrowRight", label: "箭头向右" },
-  { value: "ArrowLeft", label: "箭头向左" },
-  { value: "ChevronRight", label: "尖括号向右" },
-  { value: "ChevronLeft", label: "尖括号向左" },
-  { value: "Play", label: "播放" },
-  { value: "Send", label: "发送" },
-  { value: "Upload", label: "上传" },
-  { value: "Download", label: "下载" },
-  { value: "Check", label: "勾选" },
-  { value: "Camera", label: "相机" },
-  { value: "Image", label: "图片" },
-  { value: "Sparkles", label: "星星" },
-  { value: "Zap", label: "闪电" },
-  { value: "Loader", label: "加载" },
-];
+// 全量图标名称：排除 Lucide 前缀、Icon/Circle 后缀的导出
+// 说明：后续通过这些名称在 LucideIconComp 上动态取组件
 
 const ButtonStyleDialog = ({ isOpen, onClose, config, onSave }) => {
   const [localConfig, setLocalConfig] = useState({
@@ -82,6 +67,153 @@ const ButtonStyleDialog = ({ isOpen, onClose, config, onSave }) => {
     }
   }, [isOpen, config]);
 
+  const allIconNames = useMemo(
+    () =>
+      Object.keys(LucideIconComp).filter(
+        (n) =>
+          !n.startsWith("Lucide") &&
+          !n.endsWith("Icon") &&
+          !n.endsWith("Circle")
+      ),
+    []
+  );
+
+  const IconPicker = ({ fieldKey, label }) => {
+    const [open, setOpen] = useState(false);
+    const [scrollTop, setScrollTop] = useState(0);
+    const containerRef = React.useRef(null);
+    const selectedName = localConfig[fieldKey];
+    const SelectedIcon = selectedName && LucideIconComp[selectedName];
+
+    const columns = 10; // 增加列数以提升密度
+    const itemHeight = 36; // 与按钮 h-9 对应，更紧凑
+    const bufferRows = 3;
+    const totalItems = 1 + allIconNames.length; // 包含“无”
+    const totalRows = Math.ceil(totalItems / columns);
+
+    const containerHeight = 288; // 对应 max-h-72
+    const visibleRows = Math.ceil(containerHeight / itemHeight) + bufferRows;
+
+    const currentRow = Math.floor(scrollTop / itemHeight);
+    const startRow = Math.max(0, currentRow - bufferRows);
+    const endRow = Math.min(totalRows, startRow + visibleRows);
+    const startIndex = startRow * columns;
+    const endIndex = Math.min(totalItems, endRow * columns);
+
+    const topSpacerHeight = startRow * itemHeight;
+    const bottomSpacerHeight = Math.max(0, (totalRows - endRow) * itemHeight);
+
+    const renderCell = (index) => {
+      if (index === 0) {
+        const isActive = selectedName === "";
+        return (
+          <button
+            key="__none__"
+            type="button"
+            title="无图标"
+            onClick={() => {
+              setLocalConfig((prev) => ({ ...prev, [fieldKey]: "" }));
+              setOpen(false);
+            }}
+            className={`flex items-center justify-center h-9 rounded border text-[11px] hover:bg-gray-50 transition ${
+              isActive
+                ? "border-blue-500 ring-1 ring-blue-500"
+                : "border-gray-200"
+            }`}
+          >
+            无
+          </button>
+        );
+      }
+      const name = allIconNames[index - 1];
+      const IconComp = LucideIconComp[name];
+      if (!IconComp || !IconComp.render) return <div key={index} />;
+      const isActive = selectedName === name;
+      return (
+        <button
+          key={name}
+          type="button"
+          title={name}
+          onClick={() => {
+            setLocalConfig((prev) => ({ ...prev, [fieldKey]: name }));
+            setOpen(false);
+          }}
+          className={`flex items-center justify-center h-9 rounded border hover:bg-gray-50 transition ${
+            isActive
+              ? "border-blue-500 ring-1 ring-blue-500"
+              : "border-gray-200"
+          }`}
+        >
+          <IconComp size={18} />
+        </button>
+      );
+    };
+
+    useEffect(() => {
+      const handler = (e) => {
+        if (!open) return;
+        if (containerRef.current && !containerRef.current.contains(e.target)) {
+          setOpen(false);
+        }
+      };
+      document.addEventListener("mousedown", handler);
+      return () => document.removeEventListener("mousedown", handler);
+    }, [open]);
+
+    return (
+      <div className="space-y-2 relative">
+        <Label>{label}</Label>
+        <div className="flex items-center gap-2">
+          <div
+            role="button"
+            onClick={() => setOpen((v) => !v)}
+            className="flex items-center gap-1.5 h-8 px-1.5 rounded cursor-pointer select-none hover:bg-gray-50 transition-colors"
+          >
+            {SelectedIcon ? (
+              <SelectedIcon
+                className="shrink-0"
+                color={localConfig.iconColor}
+                size={18}
+              />
+            ) : (
+              <span className="text-[11px] text-gray-400">未选择</span>
+            )}
+          </div>
+          {selectedName && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                setLocalConfig((prev) => ({ ...prev, [fieldKey]: "" }))
+              }
+              className="h-8 px-2"
+            >
+              清除
+            </Button>
+          )}
+        </div>
+
+        {open && (
+          <div
+            ref={containerRef}
+            className="absolute z-50 mt-1 w-full rounded-md border bg-white shadow-lg"
+          >
+            <div
+              className="grid grid-cols-10 gap-1.5 max-h-72 overflow-y-auto p-1.5"
+              style={{ position: "relative" }}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            >
+              <div style={{ height: topSpacerHeight }} />
+              {Array.from({ length: endIndex - startIndex }, (_, i) =>
+                renderCell(startIndex + i)
+              )}
+              <div style={{ height: bottomSpacerHeight }} />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const handleStyleChange = (key, value) => {
     setLocalConfig((prev) => ({
       ...prev,
@@ -133,7 +265,7 @@ const ButtonStyleDialog = ({ isOpen, onClose, config, onSave }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-lg shadow-xl w-[700px] max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl w-[1000px] max-h-[92vh] flex flex-col">
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-lg font-semibold">设置按钮样式</h2>
@@ -146,7 +278,7 @@ const ButtonStyleDialog = ({ isOpen, onClose, config, onSave }) => {
         </div>
 
         {/* 内容区 */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* 预览区 */}
           <div className="border rounded-lg p-4 bg-gray-50">
             <Label className="text-sm font-medium mb-2 block">实时预览</Label>
@@ -217,49 +349,9 @@ const ButtonStyleDialog = ({ isOpen, onClose, config, onSave }) => {
             <h3 className="font-medium text-sm text-gray-700">图标设置</h3>
 
             <div className="grid grid-cols-2 gap-4">
-              {/* 图标名称 */}
-              <div className="space-y-2">
-                <Label htmlFor="iconName">图标</Label>
-                <select
-                  id="iconName"
-                  value={localConfig.iconName}
-                  onChange={(e) =>
-                    setLocalConfig((prev) => ({
-                      ...prev,
-                      iconName: e.target.value,
-                    }))
-                  }
-                  className="w-full h-10 px-3 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {ICON_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <IconPicker fieldKey="iconName" label="图标" />
 
-              {/* 加载图标 */}
-              <div className="space-y-2">
-                <Label htmlFor="loadingIconName">加载图标</Label>
-                <select
-                  id="loadingIconName"
-                  value={localConfig.loadingIconName}
-                  onChange={(e) =>
-                    setLocalConfig((prev) => ({
-                      ...prev,
-                      loadingIconName: e.target.value,
-                    }))
-                  }
-                  className="w-full h-10 px-3 rounded-md border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {ICON_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <IconPicker fieldKey="loadingIconName" label="加载图标" />
 
               {/* 图标位置 */}
               <div className="space-y-2">
